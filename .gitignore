@@ -1,0 +1,25 @@
+
+# Environment
+.env
+__pycache__/
+*.py[cod]
+
+# Project Data (Folders kept, content ignored)
+book/*
+!book/.gitkeep
+
+output/*
+!output/.gitkeep
+
+# Diagnostics & Logs
+*.txt
+*.log
+compare_output.txt
+compare_output_utf8.txt
+audit_report.txt
+
+# Editor/OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
