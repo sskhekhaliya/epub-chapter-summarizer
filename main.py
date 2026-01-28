@@ -11,6 +11,10 @@ from pipeline.sanity_uploader import SanityUploader
 import threading
 import time
 import itertools
+import re
+from pipeline.utils import should_skip_chapter
+
+
 
 class Spinner:
     def __init__(self, message="Processing..."):
@@ -189,7 +193,7 @@ def main():
 
     # 5. Full Ingest
     raw_chapters = loader.get_chapters()
-    parts_count = sum(1 for ch in raw_chapters if JSONFormatter.is_part(ch.get('title', ''), ch.get('level', 0), ch.get('is_parent', False)))
+    parts_count = sum(1 for ch in raw_chapters if JSONFormatter.is_part(ch.get('title', ''), ch.get('level', 0), ch.get('is_parent', False), ch.get('semantic_type')))
     chapters_count = len(raw_chapters) - parts_count
     print(f"  - Found {len(raw_chapters)} sections ({parts_count} parts, {chapters_count} chapters).")
     
@@ -201,9 +205,10 @@ def main():
     cleaned_chapters = []
     for ch in raw_chapters:
         text = cleaner.clean(ch['content'])
-        if text:
-            ch['content'] = text
-            cleaned_chapters.append(ch)
+        # Keep everything except explicitly skipped items.
+        # This ensures that empty pages (only images) can still be structural markers.
+        ch['content'] = text
+        cleaned_chapters.append(ch)
             
     final_chapters = segmenter.segment(cleaned_chapters)
     
@@ -211,7 +216,19 @@ def main():
         print(f"  - Limiting to first {args.limit} chapters.")
         final_chapters = final_chapters[:args.limit]
         
-    print(f"  - Processing {len(final_chapters)} valid chapters.")
+    print(f"  - Processing {len(final_chapters)} valid chapters (pre-filter).")
+
+    # 7.5 Strict Filtering of Skipped Chapters
+    # We remove them entirely from the list so JSONFormatter doesn't even see them.
+    filtered_chapters = []
+    for ch in final_chapters:
+        if not should_skip_chapter(ch['title']):
+            filtered_chapters.append(ch)
+        else:
+            print(f"  - Skipping (Metadata/Title): {ch['title']}")
+    final_chapters = filtered_chapters
+    
+    print(f"  - Processing {len(final_chapters)} chapters to summarize.")
 
     # 8. Resume Context
     book_description = existing_description
@@ -222,27 +239,43 @@ def main():
     
     for i, ch in enumerate(final_chapters):
         title = ch['title']
-        if title in existing_summaries and existing_summaries[title].strip():
-            print(f"  - Skipping Chapter {i+1}: {title} (Already summarized)")
-            ch['summary'] = existing_summaries[title]
-            # If we're resuming, we might still need to extract highlights if they're missing
-            # For simplicity, we'll check if we have any highlights in the global list
-            # If the user is resuming a half-finished book, we'll just re-extract for now 
-            # or skip if we have enough. Let's just always extract if they're not there.
-            if existing_highlights and i < len(existing_highlights):
-                 ch['highlights'] = [existing_highlights[i]] # This is a weak mapping, but works if sequential
+        content = ch.get('content', '').strip()
+        content_len = len(content)
+        is_parent = ch.get('is_parent', False)
+        
+        # 8.5 Filter Skip List (Redundant check but safe)
+        if should_skip_chapter(title):
+            continue
+
+        if content_len < 100:
+             print(f"  - Warning: Chapter {i+1} ({title}) has very little content ({content_len} chars).")
+
+        try:
+            if title in existing_summaries and existing_summaries[title].strip():
+                print(f"  - Skipping Chapter {i+1}: {title} (Already summarized)")
+                ch['summary'] = existing_summaries[title]
+                # If we're resuming, we might still need to extract highlights if they're missing
+                # For simplicity, we'll check if we have any highlights in the global list
+                # If the user is resuming a half-finished book, we'll just re-extract for now 
+                # or skip if we have enough. Let's just always extract if they're not there.
+                if existing_highlights and i < len(existing_highlights):
+                     ch['highlights'] = [existing_highlights[i]] # This is a weak mapping, but works if sequential
+                else:
+                     print(f"  - Extracting Highlights for Chapter {i+1}: {title}")
+                     with Spinner("Analyzing highlights"):
+                         ch['highlights'] = summarizer.extract_highlights(ch['content'])
             else:
-                 print(f"  - Extracting Highlights for Chapter {i+1}: {title}")
-                 with Spinner("Analyzing highlights"):
-                     ch['highlights'] = summarizer.extract_highlights(ch['content'])
-        else:
-            print(f"  - Summarizing Chapter {i+1}: {title}")
-            with Spinner("Generating summary"):
-                summary = summarizer.summarize_chapter(ch['content'])
-            ch['summary'] = summary
-            print(f"  - Extracting Highlights for Chapter {i+1}: {title}")
-            with Spinner("Analyzing highlights"):
-                ch['highlights'] = summarizer.extract_highlights(ch['content'])
+                print(f"  - Summarizing Chapter {i+1}: {title}")
+                with Spinner("Generating summary"):
+                    summary = summarizer.summarize_chapter(ch['content'])
+                ch['summary'] = summary
+                print(f"  - Extracting Highlights for Chapter {i+1}: {title}")
+                with Spinner("Analyzing highlights"):
+                    ch['highlights'] = summarizer.extract_highlights(ch['content'])
+        except Exception as e:
+            print(f"\n  ! Error processing Chapter {i+1} ({title}): {e}")
+            ch['summary'] = "Summary generation failed (Error)."
+            ch['highlights'] = []
         
         JSONFormatter.save(metadata, final_chapters, output_file_path, 
                            book_description=book_description, rating=rating, affiliate_link=affiliate_link)

@@ -11,6 +11,8 @@ set CMD=%1
 
 if "%CMD%"=="highlights" goto highlights
 if "%CMD%"=="description" goto description
+if "%CMD%"=="structure" goto structure
+if "%CMD%"=="auto" goto auto
 goto main
 
 :highlights
@@ -23,6 +25,17 @@ goto end
 shift
 echo Generating Book Description...
 python "scripts\generate_description.py" %1 %2 %3 %4 %5 %6 %7 %8 %9
+goto end
+
+:structure
+shift
+echo Inspecting EPUB Structure (TOC Hierarchy)...
+python "scripts\inspect_structure.py" %1
+goto end
+
+:auto
+echo Auto-Running Books Summary Pipeline (Default Settings)...
+python main.py --rating 4.5 --restart
 goto end
 
 :main

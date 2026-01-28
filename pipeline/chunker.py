@@ -1,7 +1,7 @@
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 class Chunker:
-    def __init__(self, chunk_size=24000, chunk_overlap=200):
+    def __init__(self, chunk_size=12000, chunk_overlap=200):
         # Mistral-7B has a context of 8k or 32k usually. Safe limit 4096 chars or tokens.
         # Recursive splitter counts characters by default. 1 token ~ 4 chars.
         # So 4096 chars is ~1000 tokens. Safe.

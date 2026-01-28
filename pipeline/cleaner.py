@@ -18,8 +18,18 @@ class CleanText:
         # separator='\n\n' preserves paragraph breaks better
         text = soup.get_text(separator='\n\n')
         
-        # Simple whitespace cleanup: collapse multiple newlines (>2) to 2
+        
+        # 1. Collapse multiple newlines (>2) to 2
         text = re.sub(r'\n{3,}', '\n\n', text)
+        
+        # 2. Fix fragmented lines (e.g. "word\n." -> "word.")
+        # Finds a distinct newline followed by a single punctuation char
+        text = re.sub(r'\n\s*([.,;:])', r'\1', text)
+        
+        # 3. Join evidently broken lines where a lowercase follows a newline?
+        # Use caution here, but usually in novels, newlines start with Upper or Quote.
+        # Strict approach: just general cleanup for now.
+        
         text = text.strip()
         
         return text

@@ -1,6 +1,15 @@
 import openai
 import httpx
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from .chunker import Chunker
+
+# Retry configuration for LLM calls
+llm_retry = retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=4, max=10),
+    retry=retry_if_exception_type((openai.APIConnectionError, openai.APITimeoutError)),
+    reraise=True
+)
 
 class Summarizer:
     def __init__(self, model_url="http://localhost:11434/v1", model_name="llama3", api_key="nopass"):
@@ -8,7 +17,7 @@ class Summarizer:
         self.client = openai.OpenAI(
             base_url=model_url,
             api_key=api_key,
-            http_client=httpx.Client()
+            http_client=httpx.Client(timeout=120.0)
         )
         self.model_name = model_name
         self.chunker = Chunker()
@@ -16,8 +25,11 @@ class Summarizer:
         self.system_prompt = (
             "You are a master of literary analysis and narrative reconstruction. "
             "Your task is to summarize chapters while meticulously mimicking the specific author's prose style, "
-            "narrative tone, and vocabulary. Avoid generic emotional clichés; instead, capture the "
-            "underlying mood and themes as the author originally expressed them."
+            "narrative tone, vocabulary, AND NARRATIVE PERSPECTIVE (POV). "
+            "If the original text uses first-person ('I', 'we'), write your summary in first-person. "
+            "If the original uses third-person ('he', 'she', 'they'), write in third-person. "
+            "The summary should feel like reading a condensed version of the book itself, not a description about the book. "
+            "Avoid generic emotional clichés; instead, capture the underlying mood and themes as the author originally expressed them."
         )
         
         self.extraction_system_prompt = (
@@ -45,6 +57,10 @@ class Summarizer:
             summary = self._generate_summary(chunk)
             chunk_summaries.append(summary)
             
+        if len(chunks) > 3:
+            print(f"  Skipping merge for large chapter ({len(chunks)} chunks) to preserve detail.")
+            return "\n\n***\n\n".join(chunk_summaries)
+            
         # Merge summaries
         return self._merge_summaries(chunk_summaries)
 
@@ -68,14 +84,17 @@ class Summarizer:
         )
         
         try:
-            response = self.client.chat.completions.create(
-                model=self.model_name,
-                messages=[
-                    {"role": "system", "content": self.extraction_system_prompt},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.7
-            )
+            @llm_retry
+            def fetch_description():
+                return self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=[
+                        {"role": "system", "content": self.extraction_system_prompt},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.7
+                )
+            response = fetch_description()
             content = response.choices[0].message.content
             return self._strip_introductory_phrases(content)
         except Exception as e:
@@ -90,20 +109,25 @@ class Summarizer:
             "CRITICAL CONSTRAINTS:\n"
             "1. Output ONLY the summary text.\n"
             "2. Do NOT use introductory phrases (e.g., 'Here is a summary', 'This chapter tells', 'In this chapter').\n"
-            "3. Start the summary IMMEDIATELY with the narrative content (e.g. 'He walked into the room...').\n"
-            "4. Maintain a unified, formal, and novel-like narrative voice throughout.\n\n"
+            "3. PRESERVE THE NARRATIVE POV: If the text uses first-person ('I saw', 'I walked'), write your summary in first-person. "
+            "If it uses third-person ('He saw', 'She walked'), use third-person. The reader should feel they are reading the actual book, just condensed.\n"
+            "4. Start the summary IMMEDIATELY with the narrative content, maintaining the same POV as the original.\n"
+            "5. Maintain a unified, novel-like narrative voice throughout - this is a condensed book, NOT a book report.\n\n"
             f"TEXT TO SUMMARIZE:\n{text}"
         )
         
         try:
-            response = self.client.chat.completions.create(
-                model=self.model_name,
-                messages=[
-                    {"role": "system", "content": self.system_prompt},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.7
-            )
+            @llm_retry
+            def fetch_summary():
+                return self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=[
+                        {"role": "system", "content": self.system_prompt},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.7
+                )
+            response = fetch_summary()
             content = response.choices[0].message.content
             return self._strip_introductory_phrases(content)
         except Exception as e:
@@ -146,15 +170,18 @@ class Summarizer:
         )
         
         try:
-            response = self.client.chat.completions.create(
-                model=self.model_name,
-                messages=[
-                    {"role": "system", "content": self.extraction_system_prompt},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.7,
-                response_format={"type": "json_object"}
-            )
+            @llm_retry
+            def fetch_highlights():
+                return self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=[
+                        {"role": "system", "content": self.extraction_system_prompt},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.7,
+                    response_format={"type": "json_object"}
+                )
+            response = fetch_highlights()
             content = response.choices[0].message.content
             return self._parse_json_response(content)
         except Exception as e:
@@ -169,15 +196,21 @@ class Summarizer:
         if not content or not content.strip():
             return []
             
+        # Clean potential markdown code blocks
+        content = re.sub(r'^```json\s*', '', content.strip())
+        content = re.sub(r'\s*```$', '', content)
+            
         # 1. Try direct parsing first
         try:
             data = json.loads(content)
+            # If it's an empty object, return empty list
+            if isinstance(data, dict) and not data:
+                return []
             return self._extract_list_from_data(data)
         except json.JSONDecodeError:
             pass
             
         # 2. Try cleaning common minor syntax errors (like trailing commas)
-        # This regex removes trailing commas before closing brackets/braces
         cleaned = re.sub(r',\s*([\]}])', r'\1', content)
         try:
             data = json.loads(cleaned)
@@ -186,17 +219,22 @@ class Summarizer:
             pass
             
         # 3. Try extracting JSON block using regex if model included extra text
-        # Look for the first [ and last ] or first { and last }
         try:
+            # Try to find array first [ ... ]
             array_match = re.search(r'\[.*\]', content, re.DOTALL)
             if array_match:
-                data = json.loads(array_match.group())
-                return self._extract_list_from_data(data)
+                try:
+                    data = json.loads(array_match.group())
+                    return self._extract_list_from_data(data)
+                except: pass
                 
+            # Try to find object { ... }
             obj_match = re.search(r'\{.*\}', content, re.DOTALL)
             if obj_match:
-                data = json.loads(obj_match.group())
-                return self._extract_list_from_data(data)
+                try:
+                    data = json.loads(obj_match.group())
+                    return self._extract_list_from_data(data)
+                except: pass
         except Exception as e:
             print(f"Failed to extract JSON using regex: {e}")
             
@@ -258,15 +296,18 @@ class Summarizer:
         )
         
         try:
-            response = self.client.chat.completions.create(
-                model=self.model_name,
-                messages=[
-                    {"role": "system", "content": self.extraction_system_prompt},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.7,
-                response_format={"type": "json_object"}
-            )
+            @llm_retry
+            def fetch_consolidated():
+                return self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=[
+                        {"role": "system", "content": self.extraction_system_prompt},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.7,
+                    response_format={"type": "json_object"}
+                )
+            response = fetch_consolidated()
             content = response.choices[0].message.content
             return self._parse_json_response(content) or highlights[:15]
         except Exception as e:
@@ -288,14 +329,17 @@ class Summarizer:
         )
         
         try:
-            response = self.client.chat.completions.create(
-                model=self.model_name,
-                messages=[
-                    {"role": "system", "content": self.system_prompt},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.7
-            )
+            @llm_retry
+            def fetch_merged():
+                return self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=[
+                        {"role": "system", "content": self.system_prompt},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.7
+                )
+            response = fetch_merged()
             content = response.choices[0].message.content
             return self._strip_introductory_phrases(content)
         except Exception as e:
