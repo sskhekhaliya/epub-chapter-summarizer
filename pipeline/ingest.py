@@ -191,6 +191,11 @@ class EpiubLoader:
                         next_soup = soup_cache.get(next_file)
                         if next_soup:
                             next_content = self._extract_text_slice(next_soup, start_id=None, end_id=None)
+                            
+                            # Check if next page has a title/header - if so, it's a new chapter, abort merge
+                            if self._detect_title_from_content(next_content):
+                                break
+
                             if next_content:
                                 content = content + "\n\n" + next_content if content else next_content
                                 print(f"  - Merged blank page content for '{title}' from: {next_file}")

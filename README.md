@@ -54,19 +54,75 @@ SANITY_API_TOKEN=your_write_token
 
 ## 📖 Usage
 
-### Running the Pipeline
-Place your EPUB file in the `book/` folder and run:
+### 🚀 Quick Start
+Place your EPUB file in the `book/` folder and run the interactive pipeline:
 ```bash
-python main.py
+run.bat
+```
+Or for a fully automated run (defaults to rating 4.5 and fresh start):
+```bash
+run.bat auto
 ```
 
-### Options
-- `--limit N`: Only process the first N chapters (useful for testing).
-- `--model-name NAME`: Specify the LLM model (default: `llama3`).
-- `--model-url URL`: Set the LLM API endpoint (default: `http://localhost:11434/v1`).
+### 🎛️ Command Reference
 
-### Output
-The pipeline generates a JSON file in the `output/` directory and automatically pushes it to Sanity if configured.
+#### Main Pipeline
+```bash
+# Standard run (checks 'book/' folder, prompts for details)
+python main.py
+
+# Advanced usage with arguments
+python main.py --limit 5 --rating 4.5 --model-name llama3
+```
+**Arguments:**
+- `--limit N`: Process only the first N chapters (useful for testing).
+- `--rating N`: Set book rating (0-5).
+- `--restart`: Ignore previous incomplete runs and start fresh.
+- `--model-name NAME`: LLM model to use (default: `llama3`).
+- `--model-url URL`: LLM API endpoint (default: `http://localhost:11434/v1`).
+- `--affiliate-link URL`: Amazon affiliate link.
+
+#### Sanity Upload
+Interactively choose a generated JSON summary from `output/` to upload:
+```bash
+upload.bat
+# or manually
+python scripts/manual_upload.py output/your_book.json
+```
+
+#### Utility Tools (`run.bat` shortcuts)
+
+**Inspect EPUB Structure (Hierarchy)**  
+View the Table of Contents hierarchy before processing to verify part/chapter detection:
+```bash
+run.bat structure
+# or manually
+python scripts/inspect_structure.py
+```
+
+**Inspect EPUB Table Map (Terminal)**
+View a flat table of files and TOC titles directly in the terminal:
+```bash
+python debug_structure.py
+```
+
+**Regenerate Highlights**  
+Re-run highlight extraction for a specific book slug:
+```bash
+run.bat highlights <book-slug>
+```
+
+**Generate Description**  
+Create a book description from an existing JSON summary file:
+```bash
+run.bat description output/your_book_summary.json
+```
+
+**Dump Raw Structure to File**
+Generates a detailed `structure_full.txt` file mapping TOC entries to file paths and H1 tags:
+```bash
+python dump_structure.py
+```
 
 ---
 

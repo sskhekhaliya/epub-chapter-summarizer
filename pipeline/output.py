@@ -113,9 +113,6 @@ class JSONFormatter:
                 # Only add partDescription if the part has meaningful content (not just a heading)
                 if has_meaningful_content(raw_content):
                     current_part["partDescription"] = text_to_portable_text(summary_text)
-                else:
-                    # Keep partDescription empty for parts that are just headings
-                    current_part["partDescription"] = []
                 
                 current_part_level = level
                 book_structure.append(current_part)

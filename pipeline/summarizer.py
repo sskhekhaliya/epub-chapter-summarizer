@@ -369,6 +369,13 @@ class Summarizer:
         
         combined_pattern = re.compile("|".join(bad_patterns), re.IGNORECASE)
         
+        # Specific pattern for the book description issue
+        description_pattern = re.compile(
+            r"here(?:'s| is) a (?:compelling|high-level|brief)?\s*book description.*?(?:\n|:)", 
+            re.IGNORECASE | re.DOTALL
+        )
+
+        
         lines = text.split('\n')
         # Filter out lines that match the bad patterns strongly
         valid_lines = []
@@ -387,6 +394,14 @@ class Summarizer:
             # If a line has a strong match, we skip it.
             if combined_pattern.search(line):
                 continue
+            
+            # Check for the specific description pattern
+            if description_pattern.search(line):
+                # If it matches, we might want to just remove the match part if it's at the start
+                # But often these are standalone lines. Let's try to remove just the match.
+                line = description_pattern.sub("", line)
+                if not line.strip():
+                    continue
                 
             valid_lines.append(line)
             

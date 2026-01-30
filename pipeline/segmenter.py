@@ -11,6 +11,14 @@ class Segmenter:
         r'^[IVXLCDM]+\s*[:.\-]',
         re.IGNORECASE
     )
+    # Numeric pattern for chapters starting with numbers like "1.", "1 -", "1 Title", etc.
+    # Updated to allow:
+    # 1. Digits followed by punctuation (:, ., -) with optional space
+    # 2. Digits followed by at least one space (for "1 Title")
+    NUMERIC_PATTERN = re.compile(
+        r'^\d+(\s*[:.\-]|\s+)',
+        re.IGNORECASE
+    )
     
     def __init__(self):
         pass
@@ -20,7 +28,9 @@ class Segmenter:
         if not title:
             return False
         title_clean = title.strip()
-        return bool(self.CHAPTER_PATTERN.match(title_clean)) or bool(self.ROMAN_NUMERAL_PATTERN.match(title_clean))
+        return (bool(self.CHAPTER_PATTERN.match(title_clean)) or 
+                bool(self.ROMAN_NUMERAL_PATTERN.match(title_clean)) or 
+                bool(self.NUMERIC_PATTERN.match(title_clean)))
 
     def segment(self, chapters):
         """
